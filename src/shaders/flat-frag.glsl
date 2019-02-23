@@ -18,7 +18,7 @@ const vec3 light_Vec = vec3(4.0, -2.0, -2.0);
 const vec3 light_Vec_Col = vec3(4., 16., 43.) / 255.;
 const vec3 light_Vec2 = vec3(-4.0, 2., -2.);
 const vec3 light_Vec2_Col = vec3(117., 100., 127.) / 255.;
-const vec3 point_Light = vec3(-12., 9.5, 14.3);
+const vec3 point_Light = vec3(-12., 9.5, 12.3);
 const vec3 point_Light_Base = vec3(255., 200., 25.) / 255.;
 vec3 point_Light_Col;
 
@@ -386,15 +386,16 @@ float eyebaseSDF(vec3 p) {
 }
 
 float eyesBackSDF(vec3 p) {
-	vec3 q1 = translate(rotateX(p, -30.), -2., 2., -25.);
-	//vec3 q2 = translate(p, )
-	return eyebaseSDF(q1);
+	vec3 q1 = translate(rotateZ(p, -30.), -5., 5., -25.);
+	vec3 q2 = translate(rotateZ(p, 10.), 1.5, 0., -25.);
+	return opUnion(eyebaseSDF(q1), eyebaseSDF(q2));
 }
 
-/*
+
 float eyesLeftSDF(vec3 p) {
-	
-} */
+	vec3 q = translate(p, -27., 4.5, -17.);
+	return eyebaseSDF(q);
+} 
 
 float sceneSDF(vec3 p) {
 	return opUnion( opUnion( opUnion( opUnion( bedSDF(p),
@@ -476,6 +477,10 @@ bool withinBackEye(vec3 dir) {
 	return intersectsBox(dir, vec3(-10, -10.0, 10.), vec3(20.0, 20., 30.));
 }
 
+bool withinLeftEye(vec3 dir) {
+	return intersectsBox(dir, vec3(-30., -10., -30.), vec3(-15., 10., -20.));
+}
+
 // March along the ray
 #define max_steps 200	
 #define cutoff 50.0f
@@ -485,9 +490,10 @@ void march(vec3 origin, vec3 direction) {
 	vec3 pos;
 	bool interBed = withinBed(direction);
 	bool interEyesB = withinBackEye(direction);
+	bool interEyesL = withinLeftEye(direction);
 
 	for(int i = 0; i < max_steps; i++) {
-		pos = origin + t * direction;/*
+		pos = origin + t * direction;
 		float dist = roomSDF(pos);
 
 		if(interBed) {
@@ -496,13 +502,14 @@ void march(vec3 origin, vec3 direction) {
 
 		dist = opUnion(dist, doorSDF(pos));
 		dist = opUnion(dist, lampSDF(pos));
-		dist = opUnion(dist, eyesSDF(pos));*/
-
-		if(!interEyesB) {
-			return;
+		
+		if(interEyesB) {
+			dist = opUnion(dist, eyesBackSDF(pos));
 		}
 
-		float dist = eyesBackSDF(pos);
+		if(interEyesL) {
+			dist = opUnion(dist, eyesLeftSDF(pos));
+		}
 
 		if(dist < 0.05) {
 			if(floatEquality(dist, roomSDF(pos))) {
@@ -519,7 +526,8 @@ void march(vec3 origin, vec3 direction) {
 		    	color_Id = LAMPSHADE;
 		    } else if(floatEquality(dist, doorSDF(pos))) {
 		    	color_Id = DOOR;
-		    } else if(floatEquality(dist, eyesBackSDF(pos))) {
+		    } else if(floatEquality(dist, eyesBackSDF(pos)) ||
+		    		  floatEquality(dist, eyesLeftSDF(pos))) {
 		    	color_Id = EYES;
 		    }
 
@@ -642,10 +650,10 @@ vec4 getColor(vec3 p) {
 			#define SCALE 1.8;
 
 			vec3 lamp_col = vec3(211., 198., 131.) / 255.;
-			vec3 light = normalize(point_Light - p);
+			vec3 light = normalize(u_Eye - p);
 			vec3 view = normalize(p - u_Eye);
 			vec3 normal = getNormal(p);
-			vec3 scatterDir = (point_Light - p) + normal * DISTORTION;
+			vec3 scatterDir = (u_Eye - p) + normal * DISTORTION;
 			float lightReachingEye = pow(clamp(dot(view, -scatterDir),
 												0., 1.), GLOW) * SCALE;
 			float attenuation = max(0., dot(normal, light) +
@@ -653,7 +661,11 @@ vec4 getColor(vec3 p) {
 			float totalLight = attenuation + (lightReachingEye + 0.2) * 0.9;
 			return applyLambertReg(p, normal, lamp_col * point_Light_Col * totalLight, vec3(0.));
 		case EYES:
-			return vec4(vec3(209., 24., 14.) / 255., 1.);
+			vec3 red = vec3(209., 24., 14.) / 255.;
+			vec3 orange = vec3(247., 146., 22.) / 255.;
+			float t_eyes = noise(cos(p.y) + p.x);
+			vec3 eyes = mix(red, orange, t_eyes);
+			return vec4(mix(eyes, vec3(0.), 1. - time), 1.0);
 		case BACKGROUND:
 		default:
 			return vec4(0., 0., 0., 1.);
@@ -665,8 +677,14 @@ void main() {
   march(u_Eye, dir);
 
   out_Col = getColor(final_Pos);
-  out_Col *= 1.6 + atan(8. * out_Col - 5.5);
-  out_Col.b *= 4.;
+
+  // color mapping
+
+  if(point_Light_Col.r <= 0.) {
+  	out_Col *= 1.6 + atan(8. * out_Col - 5.5);
+  	out_Col.b *= -out_Col.b + sin(2. * -(out_Col.b - 1.5)) + sqrt(1. - pow(out_Col.b - 0.5, 2.));
+  }
+
   // vignette
   vec2 distance_center = fs_Pos / 2.;
   out_Col *= clamp(1. - length(distance_center), 0., 1.);
